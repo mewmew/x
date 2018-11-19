@@ -7,19 +7,15 @@ package main
 
 import (
 	"debug/pe"
-	"encoding/hex"
-	"encoding/json"
 	"flag"
-	"fmt"
 	"io/ioutil"
 	"log"
 	"os"
-	"strconv"
-	"strings"
+	"sort"
 
+	"github.com/mewkiz/pkg/jsonutil"
 	"github.com/mewkiz/pkg/term"
 	"github.com/pkg/errors"
-	"golang.org/x/arch/x86/x86asm"
 )
 
 var (
@@ -61,8 +57,8 @@ type lifter struct {
 	funcAddrs []Addr
 	// Parse basic block addresses.
 	blockAddrs []Addr
-	// Basic blocks.
-	blocks []*BasicBlock
+	// Functions.
+	funcs []*Function
 }
 
 // newLifter returns a new lifter based on the given binary executable path.
@@ -71,13 +67,23 @@ func newLifter(binPath string) (*lifter, error) {
 		binPath: binPath,
 	}
 	// Parse function addresses.
-	if err := decodeJSON("funcs.json", &l.funcAddrs); err != nil {
+	funcsPath := "funcs.json"
+	dbg.Printf("jsonutil.ParseFile(jsonPath = %q)\n", funcsPath)
+	if err := jsonutil.ParseFile(funcsPath, &l.funcAddrs); err != nil {
 		return nil, errors.WithStack(err)
 	}
+	sort.Slice(l.funcAddrs, func(i, j int) bool {
+		return l.funcAddrs[i] < l.funcAddrs[j]
+	})
 	// Parse basic block addresses.
-	if err := decodeJSON("blocks.json", &l.blockAddrs); err != nil {
+	blocksPath := "blocks.json"
+	dbg.Printf("jsonutil.ParseFile(jsonPath = %q)\n", blocksPath)
+	if err := jsonutil.ParseFile(blocksPath, &l.blockAddrs); err != nil {
 		return nil, errors.WithStack(err)
 	}
+	sort.Slice(l.blockAddrs, func(i, j int) bool {
+		return l.blockAddrs[i] < l.blockAddrs[j]
+	})
 	return l, nil
 }
 
@@ -108,139 +114,6 @@ func (l *lifter) lift() error {
 				return errors.WithStack(err)
 			}
 		}
-	}
-	return nil
-}
-
-// BasicBlock is a basic block; a sequence of non-branching instructions
-// terminated by an explicit or implicit (fake) control flow instruction.
-type BasicBlock struct {
-	// Instructions.
-	insts []*Inst
-}
-
-// Inst is an x86 instruction.
-type Inst struct {
-	// Address of instruction.
-	addr Addr
-	// Instruction.
-	inst x86asm.Inst
-}
-
-// liftCode lifts the code of the given section to LLVM IR.
-func (l *lifter) liftCode(start Addr, data []byte) error {
-	if err := l.decodeBlocks(start, data); err != nil {
-		return errors.WithStack(err)
-	}
-	return nil
-}
-
-// decodeBlocks decodes the x86 basic blocks of the given section.
-func (l *lifter) decodeBlocks(start Addr, data []byte) error {
-	dbg.Printf("decodeBlocks(start = %v, data)\n", start)
-	for j, blockAddr := range l.blockAddrs {
-		dbg.Printf("   block_%08X:\n", uint32(blockAddr))
-		block := &BasicBlock{}
-		instAddr := blockAddr
-		for {
-			offset := int(instAddr - start)
-			inst, err := x86asm.Decode(data[offset:], cpuMode)
-			if err != nil {
-				end := offset + 16
-				if end > len(data) {
-					end = len(data)
-				}
-				fmt.Fprintln(os.Stderr, hex.Dump(data[offset:end]))
-				return errors.Errorf("unable to parse instruction at address %v; %v", instAddr, err)
-			}
-			i := &Inst{
-				addr: instAddr,
-				inst: inst,
-			}
-			instAddr += Addr(inst.Len)
-			dbg.Println("      addr:", i.addr)
-			dbg.Println("      inst:", i.inst)
-			block.insts = append(block.insts, i)
-			if isTerm(i.inst) || (j+1 < len(l.blockAddrs) && instAddr >= l.blockAddrs[j+1]) {
-				break
-			}
-		}
-		l.blocks = append(l.blocks, block)
-	}
-	return nil
-}
-
-// ### [ Helper functions ] ####################################################
-
-// isTerm reports whether the given instruction is a terminator instruction.
-func isTerm(inst x86asm.Inst) bool {
-	switch inst.Op {
-	// Loop terminators.
-	case x86asm.LOOP, x86asm.LOOPE, x86asm.LOOPNE:
-		return true
-	// Conditional jump terminators.
-	case x86asm.JA, x86asm.JAE, x86asm.JB, x86asm.JBE, x86asm.JCXZ, x86asm.JE, x86asm.JECXZ, x86asm.JG, x86asm.JGE, x86asm.JL, x86asm.JLE, x86asm.JNE, x86asm.JNO, x86asm.JNP, x86asm.JNS, x86asm.JO, x86asm.JP, x86asm.JRCXZ, x86asm.JS:
-		return true
-	// Unconditional jump terminators.
-	case x86asm.JMP:
-		return true
-	// Return terminators.
-	case x86asm.RET:
-		return true
-	}
-	return false
-}
-
-// isExec reports whether the given section is executable.
-func isExec(sect *pe.Section) bool {
-	const codeMask = 0x00000020
-	return sect.Characteristics&codeMask != 0
-}
-
-// Addr is an address.
-type Addr uint32
-
-const (
-	// Address size in number of bits.
-	addrSize = 32
-	// Processor mode (16, 32 or 64-bit execution mode).
-	cpuMode = addrSize
-)
-
-// String returns the string representation of the address.
-func (addr Addr) String() string {
-	return fmt.Sprintf("0x%08X", uint32(addr))
-}
-
-// UnmarshalJSON unmarshals the given string representation of the address.
-func (addr *Addr) UnmarshalJSON(b []byte) error {
-	s, err := strconv.Unquote(string(b))
-	if err != nil {
-		return errors.WithStack(err)
-	}
-	if !strings.HasPrefix(s, "0x") {
-		return errors.Errorf("invalid hex representation %q; missing 0x prefix", s)
-	}
-	s = s[len("0x"):]
-	x, err := strconv.ParseUint(s, 16, addrSize)
-	if err != nil {
-		return errors.WithStack(err)
-	}
-	*addr = Addr(x)
-	return nil
-}
-
-// decodeJSON decodes the given JSON file into v.
-func decodeJSON(jsonPath string, v interface{}) error {
-	dbg.Printf("decodeJSON(jsonPath = %q)\n", jsonPath)
-	f, err := os.Open(jsonPath)
-	if err != nil {
-		return errors.WithStack(err)
-	}
-	defer f.Close()
-	dec := json.NewDecoder(f)
-	if err := dec.Decode(v); err != nil {
-		return errors.WithStack(err)
 	}
 	return nil
 }
