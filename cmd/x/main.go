@@ -54,9 +54,9 @@ type lifter struct {
 	// Binary executable path.
 	binPath string
 	// Parse function addresses.
-	funcAddrs []Addr
+	funcAddrs Addrs
 	// Parse basic block addresses.
-	blockAddrs []Addr
+	blockAddrs Addrs
 	// Functions.
 	funcs []*Function
 }
@@ -72,18 +72,14 @@ func newLifter(binPath string) (*lifter, error) {
 	if err := jsonutil.ParseFile(funcsPath, &l.funcAddrs); err != nil {
 		return nil, errors.WithStack(err)
 	}
-	sort.Slice(l.funcAddrs, func(i, j int) bool {
-		return l.funcAddrs[i] < l.funcAddrs[j]
-	})
+	sort.Sort(l.funcAddrs)
 	// Parse basic block addresses.
 	blocksPath := "blocks.json"
 	dbg.Printf("jsonutil.ParseFile(jsonPath = %q)\n", blocksPath)
 	if err := jsonutil.ParseFile(blocksPath, &l.blockAddrs); err != nil {
 		return nil, errors.WithStack(err)
 	}
-	sort.Slice(l.blockAddrs, func(i, j int) bool {
-		return l.blockAddrs[i] < l.blockAddrs[j]
-	})
+	sort.Sort(l.blockAddrs)
 	return l, nil
 }
 

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"sort"
 
 	"github.com/pkg/errors"
 	"golang.org/x/arch/x86/x86asm"
@@ -16,20 +17,31 @@ const cpuMode = addrSize
 
 // Function is a function consisting of one or more basic blocks.
 type Function struct {
-	// One or more basic blocks.
-	blocks []*BasicBlock
+	// Address of entry basic block.
+	Entry Addr
+	// Map from basic block address to basic block, containing one or more basic
+	// blocks.
+	blocks map[Addr]*BasicBlock
 }
 
-// EntryAddr returns the entry address of the function.
-func (f *Function) EntryAddr() Addr {
-	return f.blocks[0].EntryAddr()
+// newFunc returns a new function.
+func newFunc() *Function {
+	return &Function{
+		blocks: make(map[Addr]*BasicBlock),
+	}
 }
 
 // String returns the string representation of the function.
 func (f *Function) String() string {
 	buf := &bytes.Buffer{}
-	fmt.Fprintf(buf, "func_%08X() {\n", uint32(f.EntryAddr()))
-	for i, block := range f.blocks {
+	fmt.Fprintf(buf, "func_%08X() {\n", uint32(f.Entry))
+	var keys Addrs
+	for key := range f.blocks {
+		keys = append(keys, key)
+	}
+	sort.Sort(keys)
+	for i, key := range keys {
+		block := f.blocks[key]
 		if i != 0 {
 			buf.WriteString("\n")
 		}
@@ -96,7 +108,7 @@ func (l *lifter) decodeFuncs(blocks []*BasicBlock) ([]*Function, error) {
 		if i+1 < len(l.funcAddrs) {
 			end = l.funcAddrs[i+1]
 		}
-		f := &Function{}
+		f := newFunc()
 		for _, block := range blocks[j:] {
 			blockAddr := block.EntryAddr()
 			if blockAddr >= end {
@@ -105,7 +117,7 @@ func (l *lifter) decodeFuncs(blocks []*BasicBlock) ([]*Function, error) {
 			if blockAddr < start {
 				return nil, errors.Errorf("unable to locate function containing basic block; expected address >= %v, got %v", start, blockAddr)
 			}
-			f.blocks = append(f.blocks, block)
+			f.blocks[blockAddr] = block
 			j++
 		}
 		dbg.Println(f)

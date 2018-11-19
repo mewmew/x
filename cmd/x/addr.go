@@ -36,3 +36,21 @@ func (addr *Addr) UnmarshalJSON(b []byte) error {
 	*addr = Addr(x)
 	return nil
 }
+
+// Addrs implements the sort.Sort interface.
+type Addrs []Addr
+
+// Len returns the length of addrs.
+func (addrs Addrs) Len() int {
+	return len(addrs)
+}
+
+// Swap swaps the i:th and j:th elements in addrs.
+func (addrs Addrs) Swap(i, j int) {
+	addrs[i], addrs[j] = addrs[j], addrs[i]
+}
+
+// Less reports whether the i:th element is less than the j:th element in addrs.
+func (addrs Addrs) Less(i, j int) bool {
+	return addrs[i] < addrs[j]
+}
