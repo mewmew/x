@@ -4,9 +4,13 @@ import (
 	"fmt"
 	"sort"
 
+	"github.com/kr/pretty"
 	"github.com/llir/llvm/ir"
+	"github.com/llir/llvm/ir/constant"
 	"github.com/llir/llvm/ir/types"
+	"github.com/llir/llvm/ir/value"
 	"github.com/pkg/errors"
+	"golang.org/x/arch/x86/x86asm"
 )
 
 // translateFuncs translates the given x86 functions to equivalent LLVM IR
@@ -63,8 +67,34 @@ func (l *lifter) translateBlock(block *BasicBlock) (*ir.BasicBlock, error) {
 // translateInst translates the given x86 instruction to an equivalent LLVM IR
 // instruction.
 func (l *lifter) translateInst(inst *Instruction) (ir.Instruction, error) {
+	pretty.Println("inst:", inst)
 	switch inst.Op {
+	case x86asm.JMP:
+		return l.translateInstJMP(inst)
 	default:
-		panic(fmt.Errorf("support for instruction %v not yet implemented", inst.Op))
+		panic(fmt.Errorf("support for instruction %v not yet implemented; unable to translate instruction at %v", inst.Op, inst.addr))
+	}
+}
+
+// translateInstJMP translates the given x86 JMP instruction to an equivalent
+// LLVM IR instruction.
+func (l *lifter) translateInstJMP(inst *Instruction) (ir.Instruction, error) {
+	arg, err := l.translateArg(inst, inst.Args[0])
+	if err != nil {
+		return nil, errors.WithStack(err)
+	}
+	pretty.Println("arg:", arg)
+	return nil, nil
+}
+
+// translateArg translates the given x86 instruction argument to an equivalent
+// LLVM IR value.
+func (l *lifter) translateArg(inst *Instruction, arg x86asm.Arg) (value.Value, error) {
+	switch arg := arg.(type) {
+	case x86asm.Rel:
+		relAddr := int64(inst.addr) + int64(inst.Len) + int64(arg)
+		return constant.NewInt(types.I32, relAddr), nil
+	default:
+		panic(fmt.Errorf("support for instruction argument %T not yet implemented; unable to translate argument used in instruction at %v", arg, inst.addr))
 	}
 }

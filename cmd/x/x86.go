@@ -152,9 +152,9 @@ func (l *lifter) decodeFuncs(blocks []*BasicBlock) ([]*Function, error) {
 			}
 		}
 	}
-	for _, f := range funcs {
-		dbg.Println(f)
-	}
+	//for _, f := range funcs {
+	//	dbg.Println(f)
+	//}
 	return funcs, nil
 }
 
