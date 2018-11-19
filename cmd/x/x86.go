@@ -56,7 +56,7 @@ func (f *Function) String() string {
 // terminated by an explicit or implicit (fake) control flow instruction.
 type BasicBlock struct {
 	// One or more instructions.
-	insts []*Inst
+	insts []*Instruction
 }
 
 // String returns the string representation of the basic block.
@@ -77,8 +77,8 @@ func (block *BasicBlock) Entry() Addr {
 	return block.insts[0].addr
 }
 
-// Inst is an x86 instruction.
-type Inst struct {
+// Instruction is an x86 instruction.
+type Instruction struct {
 	// Address of instruction.
 	addr Addr
 	// Instruction.
@@ -187,7 +187,7 @@ func (l *lifter) decodeBlocks(start Addr, data []byte) ([]*BasicBlock, error) {
 
 // decodeInst decodes the leading bytes in src as a single x86 instruction, and
 // annotates the instruction with the given address.
-func (l *lifter) decodeInst(instAddr Addr, src []byte) (*Inst, error) {
+func (l *lifter) decodeInst(instAddr Addr, src []byte) (*Instruction, error) {
 	inst, err := x86asm.Decode(src, cpuMode)
 	if err != nil {
 		end := 16
@@ -197,7 +197,7 @@ func (l *lifter) decodeInst(instAddr Addr, src []byte) (*Inst, error) {
 		fmt.Fprintln(os.Stderr, hex.Dump(src[:end]))
 		return nil, errors.Errorf("unable to parse instruction at address %v; %v", instAddr, err)
 	}
-	return &Inst{
+	return &Instruction{
 		addr: instAddr,
 		Inst: inst,
 	}, nil
@@ -206,7 +206,7 @@ func (l *lifter) decodeInst(instAddr Addr, src []byte) (*Inst, error) {
 // ### [ Helper functions ] ####################################################
 
 // isTerm reports whether the given instruction is a terminator instruction.
-func isTerm(inst *Inst) bool {
+func isTerm(inst *Instruction) bool {
 	switch inst.Op {
 	// Loop terminators.
 	case x86asm.LOOP, x86asm.LOOPE, x86asm.LOOPNE:
