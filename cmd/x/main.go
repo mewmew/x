@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io/ioutil"
 	"log"
 	"os"
 	"strconv"
@@ -28,7 +29,19 @@ var (
 )
 
 func main() {
+	// Parse command line arguments.
+	var (
+		// quiet specifies whether to suppress non-error messages.
+		quiet bool
+	)
+	flag.BoolVar(&quiet, "q", false, "suppress non-error messages")
 	flag.Parse()
+	// Skip debug output if -q is set.
+	if quiet {
+		dbg.SetOutput(ioutil.Discard)
+	}
+
+	// Lift binary executables.
 	for _, binPath := range flag.Args() {
 		l, err := newLifter(binPath)
 		if err != nil {
