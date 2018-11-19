@@ -70,7 +70,7 @@ func newLifter(binPath string) (*lifter, error) {
 
 // lift lifts the given binary executable to LLVM IR assembly.
 func (l *lifter) lift() error {
-	dbg.Println("lift:", l.binPath)
+	dbg.Printf("lift(binPath = %q)\n", l.binPath)
 	file, err := pe.Open(l.binPath)
 	if err != nil {
 		return errors.WithStack(err)
@@ -86,7 +86,7 @@ func (l *lifter) lift() error {
 		if err != nil {
 			return errors.WithStack(err)
 		}
-		fmt.Printf("=== [ section %q ] ===\n", sect.Name)
+		dbg.Printf("=== [ section %q ] ===\n", sect.Name)
 		switch {
 		case isExec(sect):
 			rel := Addr(sect.VirtualAddress)
@@ -116,20 +116,28 @@ type Inst struct {
 
 // liftCode lifts the code of the given section to LLVM IR.
 func (l *lifter) liftCode(start Addr, data []byte) error {
-	fmt.Println("addr:", start)
-	fmt.Println(hex.Dump(data))
+	if err := l.decodeBlocks(start, data); err != nil {
+		return errors.WithStack(err)
+	}
+	return nil
+}
+
+// decodeBlocks decodes the x86 basic blocks of the given section.
+func (l *lifter) decodeBlocks(start Addr, data []byte) error {
+	dbg.Printf("decodeBlocks(start = %v, data)\n", start)
 	for j, blockAddr := range l.blockAddrs {
+		dbg.Printf("   block_%08X:\n", uint32(blockAddr))
 		block := &BasicBlock{}
 		instAddr := blockAddr
 		for {
 			offset := int(instAddr - start)
 			inst, err := x86asm.Decode(data[offset:], cpuMode)
 			if err != nil {
-				end := offset + 10
+				end := offset + 16
 				if end > len(data) {
 					end = len(data)
 				}
-				fmt.Println(hex.Dump(data[offset:end]))
+				fmt.Fprintln(os.Stderr, hex.Dump(data[offset:end]))
 				return errors.Errorf("unable to parse instruction at address %v; %v", instAddr, err)
 			}
 			i := &Inst{
@@ -137,8 +145,8 @@ func (l *lifter) liftCode(start Addr, data []byte) error {
 				inst: inst,
 			}
 			instAddr += Addr(inst.Len)
-			fmt.Println("addr:", i.addr)
-			fmt.Println("inst:", i.inst)
+			dbg.Println("      addr:", i.addr)
+			dbg.Println("      inst:", i.inst)
 			block.insts = append(block.insts, i)
 			if isTerm(i.inst) || (j+1 < len(l.blockAddrs) && instAddr >= l.blockAddrs[j+1]) {
 				break
@@ -211,7 +219,7 @@ func (addr *Addr) UnmarshalJSON(b []byte) error {
 
 // decodeJSON decodes the given JSON file into v.
 func decodeJSON(jsonPath string, v interface{}) error {
-	dbg.Println("parsing:", jsonPath)
+	dbg.Printf("decodeJSON(jsonPath = %q)\n", jsonPath)
 	f, err := os.Open(jsonPath)
 	if err != nil {
 		return errors.WithStack(err)
