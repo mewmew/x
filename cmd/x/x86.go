@@ -18,15 +18,16 @@ const cpuMode = addrSize
 // Function is a function consisting of one or more basic blocks.
 type Function struct {
 	// Address of entry basic block.
-	Entry Addr
+	entry Addr
 	// Map from basic block address to basic block, containing one or more basic
 	// blocks.
 	blocks map[Addr]*BasicBlock
 }
 
 // newFunc returns a new function.
-func newFunc() *Function {
+func newFunc(entry Addr) *Function {
 	return &Function{
+		entry:  entry,
 		blocks: make(map[Addr]*BasicBlock),
 	}
 }
@@ -34,7 +35,7 @@ func newFunc() *Function {
 // String returns the string representation of the function.
 func (f *Function) String() string {
 	buf := &bytes.Buffer{}
-	fmt.Fprintf(buf, "func_%08X() {\n", uint32(f.Entry))
+	fmt.Fprintf(buf, "func_%08X() {\n", uint32(f.entry))
 	var keys Addrs
 	for key := range f.blocks {
 		keys = append(keys, key)
@@ -61,7 +62,7 @@ type BasicBlock struct {
 // String returns the string representation of the basic block.
 func (block *BasicBlock) String() string {
 	buf := &bytes.Buffer{}
-	fmt.Fprintf(buf, "block_%08X:\n", uint32(block.EntryAddr()))
+	fmt.Fprintf(buf, "block_%08X:\n", uint32(block.Entry()))
 	for i, inst := range block.insts {
 		if i != 0 {
 			buf.WriteString("\n")
@@ -71,8 +72,8 @@ func (block *BasicBlock) String() string {
 	return buf.String()
 }
 
-// EntryAddr returns the entry address of the basic block.
-func (block *BasicBlock) EntryAddr() Addr {
+// Entry returns the entry address of the basic block.
+func (block *BasicBlock) Entry() Addr {
 	return block.insts[0].addr
 }
 
@@ -103,14 +104,17 @@ func (l *lifter) decodeFuncs(blocks []*BasicBlock) ([]*Function, error) {
 	dbg.Println("decodeFuncs(blocks)")
 	j := 0
 	var funcs []*Function
-	for i, start := range l.funcAddrs {
+	funcFromAddr := make(map[Addr]*Function)
+	// Add continuous basic blocks.
+	for i, funcAddr := range l.funcAddrs {
+		start := funcAddr
 		end := Addr(math.MaxUint32)
 		if i+1 < len(l.funcAddrs) {
 			end = l.funcAddrs[i+1]
 		}
-		f := newFunc()
+		f := newFunc(funcAddr)
 		for _, block := range blocks[j:] {
-			blockAddr := block.EntryAddr()
+			blockAddr := block.Entry()
 			if blockAddr >= end {
 				break
 			}
@@ -120,18 +124,42 @@ func (l *lifter) decodeFuncs(blocks []*BasicBlock) ([]*Function, error) {
 			f.blocks[blockAddr] = block
 			j++
 		}
-		dbg.Println(f)
 		funcs = append(funcs, f)
+		funcFromAddr[f.entry] = f
+	}
+	// Add non-continuous basic blocks.
+	if len(l.chunks) > 0 {
+		blockFromAddr := make(map[Addr]*BasicBlock)
+		for _, block := range blocks {
+			blockFromAddr[block.Entry()] = block
+		}
+		for blockAddr, chunk := range l.chunks {
+			block, ok := blockFromAddr[blockAddr]
+			if !ok {
+				return nil, errors.Errorf("unable to locate basic block at %v", blockAddr)
+			}
+			for funcAddr := range chunk {
+				dbg.Printf("   add basic block %v to non-continuous function %v", blockAddr, funcAddr)
+				f, ok := funcFromAddr[funcAddr]
+				if !ok {
+					return nil, errors.Errorf("unable to locate function at %v", funcAddr)
+				}
+				f.blocks[blockAddr] = block
+			}
+		}
+	}
+	for _, f := range funcs {
+		dbg.Println(f)
 	}
 	return funcs, nil
 }
 
 // decodeBlocks decodes the x86 basic blocks of the given section.
 func (l *lifter) decodeBlocks(start Addr, data []byte) ([]*BasicBlock, error) {
-	//dbg.Printf("decodeBlocks(start = %v, data)\n", start)
 	var blocks []*BasicBlock
+	//dbg.Printf("decodeBlocks(start = %v, data)", start)
 	for j, blockAddr := range l.blockAddrs {
-		//dbg.Printf("   block_%08X:\n", uint32(blockAddr))
+		//dbg.Printf("   block_%08X:", uint32(blockAddr))
 		block := &BasicBlock{}
 		instAddr := blockAddr
 		for {
@@ -153,6 +181,8 @@ func (l *lifter) decodeBlocks(start Addr, data []byte) ([]*BasicBlock, error) {
 	return blocks, nil
 }
 
+// decodeInst decodes the leading bytes in src as a single x86 instruction, and
+// annotates the instruction with the given address.
 func (l *lifter) decodeInst(instAddr Addr, src []byte) (*Inst, error) {
 	inst, err := x86asm.Decode(src, cpuMode)
 	if err != nil {

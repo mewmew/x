@@ -6,22 +6,21 @@
 package main
 
 import (
-	"debug/pe"
 	"flag"
 	"io/ioutil"
 	"log"
 	"os"
-	"sort"
 
-	"github.com/mewkiz/pkg/jsonutil"
 	"github.com/mewkiz/pkg/term"
-	"github.com/pkg/errors"
 )
 
 var (
 	// dbg is a logger which logs debug messages with "x:" prefix to standard
 	// error.
 	dbg = log.New(os.Stderr, term.MagentaBold("x:")+" ", 0)
+	// warn is a logger which logs warning messages with "warning:" prefix to
+	// standard error.
+	warn = log.New(os.Stderr, term.RedBold("warning:")+" ", 0)
 )
 
 func main() {
@@ -47,69 +46,4 @@ func main() {
 			log.Fatalf("%+v", err)
 		}
 	}
-}
-
-// lifter is a binary executable to LLVM IR lifter.
-type lifter struct {
-	// Binary executable path.
-	binPath string
-	// Parse function addresses.
-	funcAddrs Addrs
-	// Parse basic block addresses.
-	blockAddrs Addrs
-	// Functions.
-	funcs []*Function
-}
-
-// newLifter returns a new lifter based on the given binary executable path.
-func newLifter(binPath string) (*lifter, error) {
-	l := &lifter{
-		binPath: binPath,
-	}
-	// Parse function addresses.
-	funcsPath := "funcs.json"
-	dbg.Printf("jsonutil.ParseFile(jsonPath = %q)\n", funcsPath)
-	if err := jsonutil.ParseFile(funcsPath, &l.funcAddrs); err != nil {
-		return nil, errors.WithStack(err)
-	}
-	sort.Sort(l.funcAddrs)
-	// Parse basic block addresses.
-	blocksPath := "blocks.json"
-	dbg.Printf("jsonutil.ParseFile(jsonPath = %q)\n", blocksPath)
-	if err := jsonutil.ParseFile(blocksPath, &l.blockAddrs); err != nil {
-		return nil, errors.WithStack(err)
-	}
-	sort.Sort(l.blockAddrs)
-	return l, nil
-}
-
-// lift lifts the given binary executable to LLVM IR assembly.
-func (l *lifter) lift() error {
-	dbg.Printf("lift(binPath = %q)\n", l.binPath)
-	file, err := pe.Open(l.binPath)
-	if err != nil {
-		return errors.WithStack(err)
-	}
-	defer file.Close()
-	optHdr, ok := file.OptionalHeader.(*pe.OptionalHeader32)
-	if !ok {
-		return errors.New("support for 64-bit executables not yet implemented")
-	}
-	base := Addr(optHdr.ImageBase)
-	for _, sect := range file.Sections {
-		data, err := sect.Data()
-		if err != nil {
-			return errors.WithStack(err)
-		}
-		dbg.Printf("=== [ section %q ] ===\n", sect.Name)
-		switch {
-		case isExec(sect):
-			rel := Addr(sect.VirtualAddress)
-			addr := base + rel
-			if err := l.liftCode(addr, data); err != nil {
-				return errors.WithStack(err)
-			}
-		}
-	}
-	return nil
 }
