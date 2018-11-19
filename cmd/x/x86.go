@@ -95,7 +95,11 @@ func (l *lifter) liftCode(start Addr, data []byte) error {
 	if err != nil {
 		return errors.WithStack(err)
 	}
-	l.funcs = funcs
+	llFuncs, err := l.translateFuncs(funcs)
+	if err != nil {
+		return errors.WithStack(err)
+	}
+	_ = llFuncs
 	return nil
 }
 

@@ -18,8 +18,6 @@ type lifter struct {
 	// Maps from basic block address to the set of non-continuous functions that
 	// basic block belongs to.
 	chunks map[Addr]map[Addr]bool
-	// Functions.
-	funcs []*Function
 }
 
 // newLifter returns a new lifter based on the given binary executable path.
