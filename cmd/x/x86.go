@@ -29,7 +29,10 @@ func (f *Function) EntryAddr() Addr {
 func (f *Function) String() string {
 	buf := &bytes.Buffer{}
 	fmt.Fprintf(buf, "func_%08X() {\n", uint32(f.EntryAddr()))
-	for _, block := range f.blocks {
+	for i, block := range f.blocks {
+		if i != 0 {
+			buf.WriteString("\n")
+		}
 		fmt.Fprintf(buf, "%v\n", block)
 	}
 	buf.WriteString("}")
@@ -47,8 +50,11 @@ type BasicBlock struct {
 func (block *BasicBlock) String() string {
 	buf := &bytes.Buffer{}
 	fmt.Fprintf(buf, "block_%08X:\n", uint32(block.EntryAddr()))
-	for _, inst := range block.insts {
-		fmt.Fprintf(buf, "\t%v\n", inst)
+	for i, inst := range block.insts {
+		if i != 0 {
+			buf.WriteString("\n")
+		}
+		fmt.Fprintf(buf, "\t%v", inst)
 	}
 	return buf.String()
 }
