@@ -11,6 +11,7 @@ import (
 	"log"
 	"os"
 
+	"github.com/kr/pretty"
 	"github.com/mewkiz/pkg/term"
 )
 
@@ -42,8 +43,10 @@ func main() {
 		if err != nil {
 			log.Fatalf("%+v", err)
 		}
-		if err := l.lift(); err != nil {
+		m, err := l.lift()
+		if err != nil {
 			log.Fatalf("%+v", err)
 		}
+		pretty.Println("m:", m)
 	}
 }

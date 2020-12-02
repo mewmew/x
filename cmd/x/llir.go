@@ -13,48 +13,66 @@ import (
 	"golang.org/x/arch/x86/x86asm"
 )
 
-// translateFuncs translates the given x86 functions to equivalent LLVM IR
-// functions.
-func (l *lifter) translateFuncs(funcs []*Function) ([]*ir.Function, error) {
-	var llFuncs []*ir.Function
-	for _, f := range funcs {
-		llFunc, err := l.translateFunc(f)
-		if err != nil {
-			return nil, errors.WithStack(err)
-		}
-		llFuncs = append(llFuncs, llFunc)
-	}
-	return llFuncs, nil
+// translate translates the given x86 binary executable into an equivalent LLVM
+// IR module.
+func (l *lifter) translate() (*ir.Module, error) {
+	// Index functions.
+	l.indexFuncs()
+
+	// Create LLVM IR module.
+	// TODO: move ir.NewModule to newLifter and move m to a lifter field?
+	m := ir.NewModule()
+	return m, nil
 }
 
-// translateFunc translates the given x86 function to an equivalent LLVM IR
-// function.
-func (l *lifter) translateFunc(f *Function) (*ir.Function, error) {
+// indexFunc indexes the LLVM IR function definitions based on function address.
+func (l *lifter) indexFuncs() {
 	// TODO: handle function signatures.
-	llFunc := ir.NewFunction("", types.Void)
+	for _, asmFunc := range l.asmFuncs {
+		funcName := fmt.Sprintf("func_%08X", uint32(asmFunc.entry))
+		f := ir.NewFunction(funcName, types.Void)
+		l.funcs[asmFunc.entry] = f
+	}
+}
+
+// liftFuncs lifts the given x86 functions to equivalent LLVM IR functions.
+func (l *lifter) liftFuncs() error {
+	for _, asmFunc := range l.asmFuncs {
+		f, ok := l.funcs[asmFunc.entry]
+		if !ok {
+			return errors.Errorf("unable to locate function at %v", asmFunc.entry)
+		}
+		fl := newFuncLifter(l, f)
+		if err := fl.liftFunc(asmFunc); err != nil {
+			return errors.WithStack(err)
+		}
+	}
+	return nil
+}
+
+// liftFunc lifts the given x86 function to an equivalent LLVM IR function.
+func (fl *funcLifter) liftFunc(asmFunc *Function) error {
 	var keys Addrs
-	for key := range f.blocks {
+	for key := range asmFunc.blocks {
 		keys = append(keys, key)
 	}
 	sort.Sort(keys)
 	for _, key := range keys {
-		block := f.blocks[key]
-		llBlock, err := l.translateBlock(block)
-		if err != nil {
-			return nil, errors.WithStack(err)
+		asmBlock := asmFunc.blocks[key]
+		if err := fl.liftBlock(asmBlock); err != nil {
+			return errors.WithStack(err)
 		}
-		llFunc.Blocks = append(llFunc.Blocks, llBlock)
 	}
-	return llFunc, nil
+	return nil
 }
 
-// translateBlock translates the given x86 basic block to an equivalent LLVM IR
-// basic block.
-func (l *lifter) translateBlock(block *BasicBlock) (*ir.BasicBlock, error) {
-	blockName := fmt.Sprintf("block_%08X", uint32(block.Entry()))
+// liftBlock lifts the given x86 basic block to an equivalent LLVM IR basic
+// block.
+func (l *lifter) liftBlock(f *ir.Function, asmBlock *BasicBlock) error {
+	blockName := fmt.Sprintf("block_%08X", uint32(asmBlock.Entry()))
 	llBlock := ir.NewBlock(blockName)
-	for _, inst := range block.insts {
-		llInst, err := l.translateInst(inst)
+	for _, asmInst := range asmBlock.insts {
+		llInst, err := l.translateInst(asmInst)
 		if err != nil {
 			return nil, errors.WithStack(err)
 		}

@@ -1,48 +1,58 @@
-package main
+// Package x86 implements a disassembler for the x86 architecture.
+package x86
 
 import (
 	"bytes"
 	"encoding/hex"
 	"fmt"
+	"log"
 	"math"
 	"os"
 	"sort"
 
+	"github.com/mewkiz/pkg/term"
+	"github.com/mewmew/x/bin"
 	"github.com/pkg/errors"
 	"golang.org/x/arch/x86/x86asm"
 )
 
-// Processor mode (16, 32 or 64-bit execution mode).
-const cpuMode = addrSize
+var (
+	// dbg is a logger which logs debug messages with "x86:" prefix to standard
+	// error.
+	dbg = log.New(os.Stderr, term.MagentaBold("x86:")+" ", 0)
+	// warn is a logger which logs warning messages with "warning:" prefix to
+	// standard error.
+	warn = log.New(os.Stderr, term.RedBold("warning:")+" ", 0)
+)
 
 // Function is a function consisting of one or more basic blocks.
 type Function struct {
 	// Address of entry basic block.
-	entry Addr
+	Entry bin.Addr
 	// Map from basic block address to basic block, containing one or more basic
 	// blocks.
-	blocks map[Addr]*BasicBlock
+	Blocks map[bin.Addr]*BasicBlock
 }
 
 // newFunc returns a new function.
-func newFunc(entry Addr) *Function {
+func newFunc(entry bin.Addr) *Function {
 	return &Function{
-		entry:  entry,
-		blocks: make(map[Addr]*BasicBlock),
+		Entry:  entry,
+		Blocks: make(map[bin.Addr]*BasicBlock),
 	}
 }
 
 // String returns the string representation of the function.
 func (f *Function) String() string {
 	buf := &bytes.Buffer{}
-	fmt.Fprintf(buf, "func_%08X() {\n", uint32(f.entry))
-	var keys Addrs
-	for key := range f.blocks {
+	fmt.Fprintf(buf, "func_%08X() {\n", uint32(f.Entry))
+	var keys bin.Addrs
+	for key := range f.Blocks {
 		keys = append(keys, key)
 	}
 	sort.Sort(keys)
 	for i, key := range keys {
-		block := f.blocks[key]
+		block := f.Blocks[key]
 		if i != 0 {
 			buf.WriteString("\n")
 		}
@@ -73,20 +83,22 @@ func (block *BasicBlock) String() string {
 }
 
 // Entry returns the entry address of the basic block.
-func (block *BasicBlock) Entry() Addr {
+func (block *BasicBlock) Entry() bin.Addr {
 	return block.insts[0].addr
 }
 
 // Instruction is an x86 instruction.
 type Instruction struct {
 	// Address of instruction.
-	addr Addr
+	addr bin.Addr
 	// Instruction.
 	x86asm.Inst
 }
 
-// liftCode lifts the code of the given section to LLVM IR.
-func (l *lifter) liftCode(start Addr, data []byte) error {
+// decodeCodeSection decodes the x86 instructions of the given code section.
+//
+// Post-condition: l.asmFuncs contains the decoded x86 functions.
+func (l *lifter) decodeCodeSection(start bin.Addr, data []byte) error {
 	blocks, err := l.decodeBlocks(start, data)
 	if err != nil {
 		return errors.WithStack(err)
@@ -95,24 +107,20 @@ func (l *lifter) liftCode(start Addr, data []byte) error {
 	if err != nil {
 		return errors.WithStack(err)
 	}
-	llFuncs, err := l.translateFuncs(funcs)
-	if err != nil {
-		return errors.WithStack(err)
-	}
-	_ = llFuncs
+	l.asmFuncs = funcs
 	return nil
 }
 
 // decodeFuncs decodes the x86 functions based on the given basic blocks.
 func (l *lifter) decodeFuncs(blocks []*BasicBlock) ([]*Function, error) {
 	dbg.Println("decodeFuncs(blocks)")
+	// Add continuous basic blocks.
 	j := 0
 	var funcs []*Function
-	funcFromAddr := make(map[Addr]*Function)
-	// Add continuous basic blocks.
+	funcFromAddr := make(map[bin.Addr]*Function)
 	for i, funcAddr := range l.funcAddrs {
 		start := funcAddr
-		end := Addr(math.MaxUint32)
+		end := bin.Addr(math.MaxUint32)
 		if i+1 < len(l.funcAddrs) {
 			end = l.funcAddrs[i+1]
 		}
@@ -133,7 +141,7 @@ func (l *lifter) decodeFuncs(blocks []*BasicBlock) ([]*Function, error) {
 	}
 	// Add non-continuous basic blocks.
 	if len(l.chunks) > 0 {
-		blockFromAddr := make(map[Addr]*BasicBlock)
+		blockFromAddr := make(map[bin.Addr]*BasicBlock)
 		for _, block := range blocks {
 			blockFromAddr[block.Entry()] = block
 		}
@@ -159,7 +167,7 @@ func (l *lifter) decodeFuncs(blocks []*BasicBlock) ([]*Function, error) {
 }
 
 // decodeBlocks decodes the x86 basic blocks of the given section.
-func (l *lifter) decodeBlocks(start Addr, data []byte) ([]*BasicBlock, error) {
+func (l *lifter) decodeBlocks(start bin.Addr, data []byte) ([]*BasicBlock, error) {
 	var blocks []*BasicBlock
 	//dbg.Printf("decodeBlocks(start = %v, data)", start)
 	for j, blockAddr := range l.blockAddrs {
@@ -172,7 +180,7 @@ func (l *lifter) decodeBlocks(start Addr, data []byte) ([]*BasicBlock, error) {
 			if err != nil {
 				return nil, errors.WithStack(err)
 			}
-			instAddr += Addr(inst.Len)
+			instAddr += bin.Addr(inst.Len)
 			//dbg.Println("      addr:", inst.addr)
 			//dbg.Println("      inst:", inst)
 			block.insts = append(block.insts, inst)
@@ -187,7 +195,7 @@ func (l *lifter) decodeBlocks(start Addr, data []byte) ([]*BasicBlock, error) {
 
 // decodeInst decodes the leading bytes in src as a single x86 instruction, and
 // annotates the instruction with the given address.
-func (l *lifter) decodeInst(instAddr Addr, src []byte) (*Instruction, error) {
+func (l *lifter) decodeInst(instAddr bin.Addr, src []byte) (*Instruction, error) {
 	inst, err := x86asm.Decode(src, cpuMode)
 	if err != nil {
 		end := 16
